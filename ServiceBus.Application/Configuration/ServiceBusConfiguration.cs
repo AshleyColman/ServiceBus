@@ -1,7 +1,8 @@
 ﻿namespace ServiceBus.Application.Options
 {
-    public class ServiceBusConfiguration
+    public sealed class ServiceBusConfiguration
     {
-        public string ChatMessageQueueName { get; init; } = null!;
+        public string QueueName { get; init; } = null!;
+        public int RecieveTimeout { get; init; }
     }
 }

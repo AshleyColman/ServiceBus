@@ -1,49 +1,79 @@
 ﻿using Azure.Messaging.ServiceBus;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ServiceBus.Application.Options;
 using ServiceBus.Application.Requests;
 using ServiceBus.Interfaces.Services;
+using System.Net.Mime;
 using System.Text.Json;
 
 namespace ServiceBus.Application.Services
 {
     public class ServiceBusService : IServiceBusService
     {
-        private readonly ServiceBusConfiguration configuration;
-        private readonly ServiceBusClient serviceBusClient;
-        private readonly ServiceBusSender chatMessageQueueSender;
+        private readonly ILogger<ServiceBusService> _logger;
+        private readonly ServiceBusConfiguration _configuration;
+        private readonly ServiceBusClient _serviceBusClient;
+        private readonly ServiceBusSender _queueSender;
+        private readonly ServiceBusReceiver _queueReciever;
 
         public ServiceBusService(
+            ILogger<ServiceBusService> logger,
             IOptions<ServiceBusConfiguration> configuration,
             ServiceBusClient serviceBusClient)
         {
-            this.configuration = configuration.Value;
-            this.serviceBusClient = serviceBusClient;
-            this.chatMessageQueueSender = serviceBusClient.CreateSender(this.configuration.ChatMessageQueueName);
+            _logger = logger;
+            _configuration = configuration.Value;
+            _serviceBusClient = serviceBusClient;
+            _queueSender = serviceBusClient.CreateSender(_configuration.QueueName);
+            _queueReciever = serviceBusClient.CreateReceiver(_configuration.QueueName);    
         }
 
-        public async Task PostChatMessageToQueueAsync(PostMessageToQueueRequest request)
+        public async Task<ServiceBusReceivedMessage?> PeekMessageAsync()
+        {
+            ServiceBusReceivedMessage message = await _queueReciever.PeekMessageAsync();
+
+            if (message is null)
+                _logger.LogInformation("Unable to peek message, no messages in the queue");
+
+            return message;
+        }
+
+        public async Task<ServiceBusReceivedMessage?> CompleteMessageAsync()
+        {
+            ServiceBusReceivedMessage message = await _queueReciever.ReceiveMessageAsync(TimeSpan.FromMinutes(_configuration.RecieveTimeout));
+
+            await _queueReciever.CompleteMessageAsync(message);
+
+            return message;
+        }
+
+        public async Task AddMessageAsync(AddMessageRequest request)
         {
             var message = new ServiceBusMessage(JsonSerializer.Serialize(request));
 
-            try
-            {
-                await chatMessageQueueSender.SendMessageAsync(message);
-            }
-            catch (Exception)
-            {
+            message.ContentType = MediaTypeNames.Application.Json;
 
-                throw;
-            }
-
-
-            await DisposeServiceBusAsync();
+            await _queueSender.SendMessageAsync(message);
         }
 
-        private async Task DisposeServiceBusAsync()
+        public async Task<ICollection<ServiceBusMessage>> BatchAddMessagesAsync(IReadOnlyCollection<Message> messages)
         {
-            await chatMessageQueueSender.DisposeAsync();
-            await serviceBusClient.DisposeAsync();
+            ServiceBusMessageBatch messageBatch = await _queueSender.CreateMessageBatchAsync();
+
+            ICollection<ServiceBusMessage> result = [];
+
+            foreach (var message in messages) 
+            {
+                ServiceBusMessage? batchMessage = new(JsonSerializer.Serialize(message));
+
+                messageBatch.TryAddMessage(batchMessage);
+                result.Add(batchMessage);
+            }
+
+            await _queueSender.SendMessagesAsync(messageBatch);
+
+            return result;
         }
     }
 }

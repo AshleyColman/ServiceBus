@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Azure.Messaging.ServiceBus;
+using Microsoft.AspNetCore.Mvc;
 using ServiceBus.Application.Requests;
 using ServiceBus.Interfaces.Services;
 
@@ -6,28 +7,47 @@ namespace ServiceBus.WebApi.Controllers
 {
     [ApiController]
     [Route("ServiceBus")]
-    public class ServiceBusController : ControllerBase
+    public class ServiceBusController(IServiceBusService serviceBusService) : ControllerBase
     {
-        private readonly IServiceBusService serviceBusService;
-
-        public ServiceBusController(IServiceBusService serviceBusService)
+        [HttpGet("PeekMessage")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        public async Task<ActionResult<ServiceBusReceivedMessage?>> PeekMessage()
         {
-            this.serviceBusService = serviceBusService;
+           ServiceBusReceivedMessage? message = await serviceBusService.PeekMessageAsync();
+
+            return message is null ? BadRequest() : Ok(message);
         }
 
-        [HttpGet]
-        public IActionResult GetMessage()
+        [HttpGet("CompleteMessage")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        public async Task<ActionResult<ServiceBusReceivedMessage?>> CompleteMessage()
         {
-            return Ok();
+            ServiceBusReceivedMessage? message = await serviceBusService.CompleteMessageAsync();
+
+            return message is null ? BadRequest() : Ok(message);
         }
 
-        [HttpPost]
+        [HttpPost("AddMessage")]
         [ProducesResponseType(StatusCodes.Status201Created)]
-        public IActionResult PostMessageToQueue([FromBody] PostMessageToQueueRequest request)
+        public async Task<IActionResult> AddMessage([FromBody] AddMessageRequest request)
         {
-            serviceBusService.PostChatMessageToQueueAsync(request);
+            await serviceBusService.AddMessageAsync(request);
 
             return Created(string.Empty, string.Empty);
+        }
+
+        [HttpPost("BatchAddMessages")]
+        [ProducesResponseType(StatusCodes.Status201Created)]
+        public async Task<IActionResult> BatchAddMessages([FromBody] BatchAddMessagesRequest request)
+        {
+            if (request.Messages is null)
+                return BadRequest();
+
+            ICollection<ServiceBusMessage> result = await serviceBusService.BatchAddMessagesAsync(request.Messages);
+
+            return Created(string.Empty, result);
         }
     }
 }
